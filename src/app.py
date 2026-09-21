@@ -5,9 +5,12 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
+from typing import Optional, Literal
+
 from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import os
 from pathlib import Path
 
@@ -18,6 +21,20 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+
+class RegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: Optional[Literal["student", "admin"]] = "student"
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    role: Optional[Literal["student", "admin"]] = None
+
 
 # In-memory activity database
 activities = {
@@ -78,9 +95,69 @@ activities = {
 }
 
 
+users_db = {
+    "admin@mergington.edu": {
+        "name": "School Administrator",
+        "email": "admin@mergington.edu",
+        "password": "admin123",
+        "role": "admin",
+    }
+}
+
+
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/index.html")
+
+
+@app.post("/auth/register", status_code=201)
+def register_user(user: RegisterRequest):
+    normalized_email = user.email.strip().lower()
+
+    if not user.name.strip() or not user.password:
+        raise HTTPException(status_code=400, detail="Name and password are required")
+
+    if user.role != "student":
+        raise HTTPException(status_code=400, detail="Only student registration is supported")
+
+    if normalized_email in users_db:
+        raise HTTPException(status_code=409, detail="User already exists")
+
+    users_db[normalized_email] = {
+        "name": user.name.strip(),
+        "email": normalized_email,
+        "password": user.password,
+        "role": "student",
+    }
+
+    return {
+        "message": f"Registered {normalized_email} as a student",
+        "name": user.name.strip(),
+        "email": normalized_email,
+        "role": "student",
+    }
+
+
+@app.post("/auth/login")
+def login_user(user: LoginRequest):
+    normalized_email = user.email.strip().lower()
+    account = users_db.get(normalized_email)
+
+    if account is None:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    if account["password"] != user.password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    requested_role = user.role or account["role"]
+    if account["role"] != requested_role:
+        raise HTTPException(status_code=403, detail="Role mismatch")
+
+    return {
+        "name": account["name"],
+        "email": account["email"],
+        "role": account["role"],
+    }
 
 
 @app.get("/activities")
